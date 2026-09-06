@@ -25,6 +25,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import city_from_env
 from src.data.openmeteo import fetch_air_quality_history, fetch_weather_history
+
+POLLUTANT_RENAME = {
+    "ozone": "o3",
+    "nitrogen_dioxide": "no2",
+    "sulphur_dioxide": "so2",
+    "carbon_monoxide": "co",
+}
 from src.store.hopsworks_client import insert_features
 
 logging.basicConfig(
@@ -61,6 +68,7 @@ def fetch_range(lat: float, lon: float, start: date, end: date) -> pd.DataFrame:
     logger.info("Fetching %s -> %s", start, end)
     aq = fetch_air_quality_history(lat, lon, start, end)
     wx = fetch_weather_history(lat, lon, start, end)
+    aq = aq.rename(columns=POLLUTANT_RENAME)
     merged = pd.merge(aq, wx, on="timestamp", how="inner")
     logger.info("  aq=%d wx=%d merged=%d", len(aq), len(wx), len(merged))
     return merged

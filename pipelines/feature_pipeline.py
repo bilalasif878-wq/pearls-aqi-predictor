@@ -1,8 +1,13 @@
 """Hourly feature pipeline.
 
-Fetches the latest hour of pollutant + weather data, combines them, and appends
-one row to the Hopsworks feature group. Designed to be idempotent — running it
-twice in the same hour will simply overwrite the same (city, timestamp) key.
+Pulls the latest hour of air quality + weather from Open-Meteo (CAMS global model
++ ERA5-derived weather) and writes one row to the Hopsworks feature group.
+
+Design note — why not AQICN:
+  AQICN's Lahore coverage is currently offline (US Embassy station stopped
+  reporting Feb 2025). Open-Meteo's air-quality is the CAMS global reanalysis
+  which gives consistent hourly coverage anywhere on Earth. Same source for
+  live and historical means one schema, no timestamp alignment issues.
 
 Run manually:
     python -m pipelines.feature_pipeline
@@ -20,10 +25,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.config import aqicn_token, city_from_env
-from src.data.aqicn import fetch_station
-from src.data.openmeteo import fetch_weather_current
-from src.features.build import build_features
+from src.config import city_from_env
+from src.data.openmeteo import fetch_air_quality_current, fetch_weather_current
 from src.store.hopsworks_client import insert_features
 
 logging.basicConfig(
@@ -32,63 +35,58 @@ logging.basicConfig(
 )
 logger = logging.getLogger("feature_pipeline")
 
+POLLUTANT_COLS = ["aqi", "pm25", "pm10", "ozone", "nitrogen_dioxide",
+                  "sulphur_dioxide", "carbon_monoxide"]
+WEATHER_COLS = ["temperature", "humidity", "dew_point", "pressure",
+                "wind_speed", "wind_direction", "cloud_cover", "precipitation"]
+
+# Rename Open-Meteo full names to short pollutant column names used everywhere else
+POLLUTANT_RENAME = {
+    "ozone": "o3",
+    "nitrogen_dioxide": "no2",
+    "sulphur_dioxide": "so2",
+    "carbon_monoxide": "co",
+}
+
 
 def collect_current_row() -> pd.DataFrame:
-    """Combine one AQICN reading + Open-Meteo current weather into a single row."""
+    """Combine one hour of Open-Meteo air quality + weather into a single row."""
     city = city_from_env()
 
-    aqi = fetch_station(city.aqicn_station, aqicn_token())
-    logger.info("AQICN reading: aqi=%s pm25=%s station=%s", aqi.aqi, aqi.pm25, aqi.station_name)
+    aq = fetch_air_quality_current(city.lat, city.lon)
+    logger.info("Air quality rows: %d", len(aq))
+    wx = fetch_weather_current(city.lat, city.lon)
+    logger.info("Weather rows: %d", len(wx))
 
-    weather = fetch_weather_current(city.lat, city.lon)
-    logger.info("Weather rows fetched: %d", len(weather))
+    aq["timestamp"] = pd.to_datetime(aq["timestamp"], utc=True).dt.floor("h")
+    wx["timestamp"] = pd.to_datetime(wx["timestamp"], utc=True).dt.floor("h")
 
-    # Snap AQICN timestamp down to the hour to align with Open-Meteo grid
-    ts = pd.Timestamp(aqi.timestamp).tz_convert("UTC").floor("h")
-    row = {
-        "timestamp": ts,
-        "aqi": aqi.aqi,
-        "pm25": aqi.pm25,
-        "pm10": aqi.pm10,
-        "o3": aqi.o3,
-        "no2": aqi.no2,
-        "so2": aqi.so2,
-        "co": aqi.co,
-    }
+    # Rename to canonical short names
+    aq = aq.rename(columns=POLLUTANT_RENAME)
 
-    # Prefer Open-Meteo's weather (more complete) with AQICN as a fallback
-    weather["timestamp"] = pd.to_datetime(weather["timestamp"], utc=True).dt.floor("h")
-    weather_row = weather[weather["timestamp"] == ts]
-    if len(weather_row) == 1:
-        for col in ["temperature", "humidity", "dew_point", "pressure",
-                    "wind_speed", "wind_direction", "cloud_cover", "precipitation"]:
-            if col in weather_row.columns:
-                row[col] = float(weather_row.iloc[0][col])
-    else:
-        logger.warning("No Open-Meteo row aligned to %s; falling back to AQICN weather fields", ts)
-        row.update({
-            "temperature": aqi.temperature,
-            "humidity": aqi.humidity,
-            "pressure": aqi.pressure,
-            "wind_speed": aqi.wind_speed,
-        })
+    merged = pd.merge(aq, wx, on="timestamp", how="inner")
+    if merged.empty:
+        raise RuntimeError("No overlapping hour between air quality and weather fetches.")
 
-    return pd.DataFrame([row])
+    # Take the most recent row that has non-null AQI
+    merged = merged.sort_values("timestamp").dropna(subset=["aqi"])
+    if merged.empty:
+        raise RuntimeError("No non-null AQI row available from Open-Meteo.")
+    row = merged.tail(1).copy()
+    logger.info("Latest hour: %s  AQI=%.1f  PM2.5=%.1f",
+                row["timestamp"].iloc[0], row["aqi"].iloc[0], row["pm25"].iloc[0])
+    return row
 
 
 def main() -> int:
     city = city_from_env()
     logger.info("Feature pipeline start city=%s now=%s", city.name, datetime.now(timezone.utc))
 
-    raw_row = collect_current_row()
-    logger.info("Current-hour raw row:\n%s", raw_row.to_string(index=False))
+    row = collect_current_row()
+    row["city"] = city.name
+    logger.info("Row to insert:\n%s", row.to_string(index=False))
 
-    # Building features for a single row is meaningless (no history) — so we
-    # write the raw row itself and let training-time feature engineering assemble
-    # lag / rolling features from the accumulated history in the feature store.
-    # (Feature engineering runs on the whole feature group when it's read back.)
-    raw_row["city"] = city.name
-    insert_features(raw_row, city.name)
+    insert_features(row, city.name)
     logger.info("Feature pipeline done.")
     return 0
 

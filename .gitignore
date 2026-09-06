@@ -60,3 +60,7 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# stray cache files
+.cache.sqlite
+.cache/

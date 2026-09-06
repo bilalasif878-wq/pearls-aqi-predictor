@@ -64,3 +64,9 @@ htmlcov/
 # stray cache files
 .cache.sqlite
 .cache/
+
+# Report build artifacts
+reports/node_modules/
+reports/package*.json
+Pearls_AQI_Predictor_Report.docx
+

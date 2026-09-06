@@ -39,7 +39,7 @@ def _pick_explainer(est, background: pd.DataFrame, X_row: pd.DataFrame):
             # Restore column names for readable plots
             sv.feature_names = list(X_row.columns)
             return sv
-        # Non-linear final step in a pipeline — try Tree first, else Kernel
+        # Non-linear final step in a pipeline , try Tree first, else Kernel
         try:
             explainer = shap.TreeExplainer(final)
             return explainer(row_t)

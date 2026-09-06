@@ -11,6 +11,17 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
+# Streamlit Cloud puts config in st.secrets — fold that into os.environ so the
+# rest of the codebase can keep reading environment variables uniformly.
+try:
+    import streamlit as _st
+    if hasattr(_st, "secrets"):
+        for _k, _v in dict(_st.secrets).items():
+            os.environ.setdefault(_k, str(_v))
+except Exception:
+    pass
+
+
 
 def _required(name: str) -> str:
     val = os.environ.get(name)

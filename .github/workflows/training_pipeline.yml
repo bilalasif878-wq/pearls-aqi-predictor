@@ -1,0 +1,38 @@
+name: Training pipeline (daily)
+
+on:
+  schedule:
+    - cron: '30 2 * * *'  # 02:30 UTC every day (07:30 Karachi)
+  workflow_dispatch:
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy scikit-learn xgboost lightgbm \
+            requests python-dotenv pytz openmeteo-requests requests-cache \
+            retry-requests hopsworks joblib pyarrow
+
+      - name: Train + register
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HOPSWORKS_PROJECT: ${{ secrets.HOPSWORKS_PROJECT }}
+          HOPSWORKS_HOST: ${{ secrets.HOPSWORKS_HOST }}
+        run: python -m pipelines.training_pipeline
+
+      - name: Upload model comparison table
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-comparison
+          path: reports/model_comparison.csv

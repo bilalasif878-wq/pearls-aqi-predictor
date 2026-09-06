@@ -26,7 +26,7 @@ ENV/
 *.ipynb_checkpoints
 
 # Data — never commit generated data
-data/
+/data/
 *.parquet
 *.csv
 !tests/fixtures/*.csv

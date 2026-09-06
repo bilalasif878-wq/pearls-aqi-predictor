@@ -71,6 +71,16 @@ def _candidates() -> dict[str, Any]:
     except Exception as e:
         logger.warning("lightgbm not available: %s", e)
 
+
+    try:
+        from src.models.lstm import LSTMForecaster
+
+        models["lstm"] = LSTMForecaster(
+            hidden=64, num_layers=1, epochs=15, batch_size=256, lr=2e-3, dropout=0.2,
+        )
+    except Exception as e:
+        logger.warning("PyTorch LSTM not available: %s", e)
+
     return models
 
 

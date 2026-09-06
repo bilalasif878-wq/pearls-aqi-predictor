@@ -135,21 +135,24 @@ function cell(text, opts = {}) {
 // Model comparison table
 // --------------------------------------------------------------------------
 const MODEL_ROWS = [
-  ["24 h", "ridge",         "18.02", "13.42",  "0.20"],
-  ["24 h", "random_forest", "18.39", "13.56",  "0.17"],
-  ["24 h", "persistence",   "18.65", "12.74",  "0.14"],
-  ["24 h", "xgboost",       "19.11", "14.24",  "0.10"],
-  ["24 h", "lightgbm",      "19.39", "14.89",  "0.07"],
-  ["48 h", "ridge",         "19.96", "14.85",  "0.08"],
-  ["48 h", "persistence",   "23.12", "16.88",  "-0.24"],
-  ["48 h", "random_forest", "23.64", "18.75",  "-0.30"],
-  ["48 h", "xgboost",       "25.77", "20.54",  "-0.54"],
-  ["48 h", "lightgbm",      "25.98", "20.85",  "-0.57"],
-  ["72 h", "ridge",         "21.75", "16.67",  "-0.06"],
-  ["72 h", "persistence",   "22.94", "17.29",  "-0.18"],
-  ["72 h", "random_forest", "24.97", "19.63",  "-0.40"],
-  ["72 h", "lightgbm",      "26.28", "21.08",  "-0.55"],
-  ["72 h", "xgboost",       "26.53", "20.98",  "-0.58"],
+  ["24 h", "ridge",         "18.02", "13.41",  "0.20"],
+  ["24 h", "random_forest", "18.36", "13.51",  "0.17"],
+  ["24 h", "persistence",   "18.63", "12.71",  "0.15"],
+  ["24 h", "xgboost",       "19.44", "14.74",  "0.07"],
+  ["24 h", "lightgbm",      "19.76", "15.02",  "0.04"],
+  ["24 h", "lstm (torch)",  "22.51", "17.31",  "-0.24"],
+  ["48 h", "ridge",         "19.94", "14.83",  "0.08"],
+  ["48 h", "persistence",   "23.08", "16.84",  "-0.23"],
+  ["48 h", "random_forest", "23.69", "18.73",  "-0.30"],
+  ["48 h", "xgboost",       "25.53", "20.16",  "-0.51"],
+  ["48 h", "lightgbm",      "26.39", "21.22",  "-0.61"],
+  ["48 h", "lstm (torch)",  "35.16", "29.80",  "-1.86"],
+  ["72 h", "ridge",         "21.74", "16.67",  "-0.07"],
+  ["72 h", "persistence",   "22.94", "17.30",  "-0.19"],
+  ["72 h", "random_forest", "24.94", "19.62",  "-0.41"],
+  ["72 h", "lightgbm",      "26.70", "21.56",  "-0.61"],
+  ["72 h", "xgboost",       "27.14", "21.80",  "-0.66"],
+  ["72 h", "lstm (torch)",  "45.81", "38.52",  "-3.74"],
 ];
 
 const COL_WIDTHS = [1200, 2400, 1800, 1800, 1800]; // sum = 9000
@@ -307,7 +310,7 @@ children.push(body(
 // --- 5. Models and results ---
 children.push(h1("5. Models and results"));
 children.push(body(
-  "I trained five candidate models for each of three forecast horizons (24, 48, and 72 hours ahead):"
+  "I trained six candidate models for each of three forecast horizons (24, 48, and 72 hours ahead):"
 ));
 children.push(bulletRuns([
   run("Persistence baseline. ", { bold: true }),
@@ -317,6 +320,10 @@ children.push(bullet("Ridge regression with feature scaling."));
 children.push(bullet("Random Forest with 300 trees."));
 children.push(bullet("XGBoost with 500 boosting rounds."));
 children.push(bullet("LightGBM with 500 boosting rounds."));
+children.push(bulletRuns([
+  run("PyTorch LSTM. ", { bold: true }),
+  run("A small 1-layer LSTM (hidden size 64) fed a length-7 sequence assembled from the existing lag features (values at t-48, t-24, t-12, t-6, t-3, t-1 and t) for eleven pollutant and weather variables, followed by an MLP head. Trained for 15 epochs on Apple Silicon's MPS backend."),
+]));
 children.push(body(
   "The training uses a time-based split: about 340 days for training, then a 30-day validation window, then the most recent 30 days as the test set. Random splits would leak future information into the training set, which is a common pitfall in time-series problems."
 ));
@@ -324,10 +331,13 @@ children.push(body("Test-set performance for each model (sorted best to worst wi
 children.push(modelTable());
 children.push(new Paragraph({ spacing: { after: 200 } }));
 children.push(body(
-  "Ridge won every horizon. This was a bit surprising at first because I expected the boosted trees to win. Reading back through the data I think what happened is that the features are well-conditioned linear signals (lags and rolling means correlate almost linearly with future AQI), the boosted trees were overfitting to seasonal patterns in the training set that did not generalise, and the 30-day test window can be a real distribution shift from the training window ending 30 days earlier."
+  "Ridge won every horizon. This was a bit surprising at first because I expected the boosted trees or the LSTM to win. Reading back through the data I think what happened is that the features are well-conditioned linear signals (lags and rolling means correlate almost linearly with future AQI), and the fancier models had less room to add value than I expected. The boosted trees were overfitting to seasonal patterns in the training set that did not generalise, and the 30-day test window can be a real distribution shift from the training window ending 30 days earlier."
 ));
 children.push(body(
-  "The R² drops off sharply with horizon, which is honest, not a bug. Predicting AQI 72 hours ahead really is much harder than predicting 24 hours ahead. The Ridge 72h R² is basically zero, which means the model is barely better than just predicting the mean. But its RMSE is still better than the persistence baseline, so it is doing something."
+  "The LSTM in particular was disappointing. It came last on every horizon and got dramatically worse as the horizon increased. I think there are a few reasons for that. The sequence I fed it was very sparse (only six historical timesteps: 48, 24, 12, 6, 3 and 1 hours back), so the LSTM machinery was not really operating over a proper hourly sequence. The training set is also small for a deep model (about 8,000 rows), and I only trained for 15 epochs. The takeaway is a common one for tabular time-series problems with modest amounts of data: well-engineered linear or tree models often beat deep learning, and the deep model becomes worthwhile only when you have longer sequences, more data, or richer features that a linear model cannot compose on its own."
+));
+children.push(body(
+"The R² drops off sharply with horizon, which is honest, not a bug. Predicting AQI 72 hours ahead really is much harder than predicting 24 hours ahead. The Ridge 72h R² is basically zero, which means the model is barely better than just predicting the mean. But its RMSE is still better than the persistence baseline, so it is doing something."
 ));
 children.push(body(
   "All three winning models (Ridge for 24h, 48h, and 72h) are registered in the Hopsworks model registry as separate named models. The dashboard pulls the best-by-RMSE version at inference time."

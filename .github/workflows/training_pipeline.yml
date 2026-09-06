@@ -22,7 +22,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas numpy scikit-learn xgboost lightgbm \
             requests python-dotenv pytz openmeteo-requests requests-cache \
-            retry-requests "hopsworks[python]" joblib pyarrow
+            retry-requests "hopsworks[python]" joblib pyarrow \
+            "torch>=2.2,<3.0" --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple/
 
       - name: Train + register
         env:
